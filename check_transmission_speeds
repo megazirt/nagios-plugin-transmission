@@ -1,0 +1,162 @@
+#! /bin/bash
+# Set junk
+PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
+
+PROGNAME=`basename $0`
+PROGPATH=`echo $0 | sed -e 's,[\\/][^\\/][^\\/]*$,,'`
+REVISION="1.0"
+
+# . $PROGPATH/utils.sh
+
+# Set standard routines
+print_help() {
+#	print_revision $PROGNAME $REVISION
+	echo $PROGNAME $REVISION
+	echo ""
+	echo ""
+	echo "This plugin checks Transmission upload and download rate."
+	echo "You can set a warning and/or critical on both the down and up speeds."
+	echo "This might indicate to users that are noticing slow network speeds"
+	echo "that it's probably caused by temporary Transmission use."
+	echo ""
+	echo "You can of course restrict Transmissions speeds within the program, which"
+	echo "is highly recommended to make sure it doesn't use up all bandwidth."
+	echo ""
+	echo "Requires transmission-remote to be installed on the nagios side"
+	echo "and... -a DownloadSpeedWarning -b DownloadSpeedCritical "
+	echo "-d UploadSpeedWarning -e UploadSpeedCritical -H hostname"
+	echo "-u Username -p Password"
+	echo ""
+#	support
+	exit -1
+}
+
+
+# Check command line options
+if [ $# -eq 0 ]; then
+print_help
+fi
+
+while [ $# -gt 1 ]; do
+case "$1" in
+	--help)
+		print_help
+		exit -1
+		;;
+	-h)
+		print_help
+		exit -1
+		;;
+	--version)
+   		echo $PROGNAME $REVISION " by Megazirt Ltd. Edit as you wish."
+		exit -1
+		;;
+	-V)
+		echo $PROGNAME $REVISION " by Megazirt Ltd. Edit as you wish."
+		exit -1
+		;;
+	#fix the values in case the user tries decimals. Bash don't like 'em.
+	-H)	hostname=${2} ; shift 2		;;
+	-a)	getdownwarn=${2/\.*} ; shift 2	;;
+	-b)	getdowncrit=${2/\.*} ; shift 2	;;
+	-c)	getupwarn=${2/\.*} ; shift 2	;;
+	-d)	getupcrit=${2/\.*} ; shift 2	;;
+	-u)	user=${2} ; shift 2		;;
+	-p)	pass=${2} ; shift 2		;;
+	*)	shift 1	;;
+esac
+done
+
+# Check transmission-remote installed
+		ratty=`transmission-remote 2>&1`
+		status=$?
+		if test ${status} -eq 127; then
+			echo ""
+			echo "transmission-remote command not found (did you install transmission-remote?)"
+			echo "This plugin is just a cheap and nasty wrapper. You need transmission-remote installed as well."
+			echo "Sorry."
+			echo ""
+			exit -1
+		fi	
+	
+# Check we have correct values
+		if [ -z $hostname ]; then
+			echo "Hostname not set."
+			incorrectsettings=1
+		fi
+		if [ -z $user ] || [ -z $pass ]; then
+			echo "Username and Password not set"
+			incorrectsettings=1
+		fi
+		if [ -z $getdowncrit ] || [ -z $getdownwarn ] || [ -z $getupcrit ] || [ -z $getupwarn ]; then
+			echo "Warning and Critical Values not set. A = $getdowncrit , B = $getdownwarn , C = $getdowncrit , D = $getupwarn "
+			incorrectsettings=1
+		else
+			if [ $getdowncrit -lt $getdownwarn -o $getupcrit -lt $getupwarn ]; then
+				echo "Critical values lower than warning values."
+				incorrectsettings=1
+			fi
+		fi
+		if [ -n "$incorrectsettings" ]; then
+			exit 3 # exit 3 is a unknown result (as in, it returns unknown to nagios.)
+		fi
+
+
+#A few values in case the script gets converted to something better than bash
+		warnings=""
+		criticals=""
+		wehavewarn="0"
+		wehavecrit="0"
+#The proper checking starts	
+		getdownrate=`echo '{"method":"torrent-get","tag":1,"arguments":{"fields":["rateUpload","rateDownload"]}}' | transmission-remote "$hostname" -n "$user":"$pass" -l |grep Sum |awk '{print int($(NF))}'`
+		getuprate=`echo '{"method":"torrent-get","tag":1,"arguments":{"fields":["rateUpload","rateDownload"]}}' | transmission-remote "$hostname" -n "$user":"$pass" -l |grep Sum |awk '{print int($(NF-1))}'`
+		if [ -z $getdownrate ]; then
+			echo "Incorrect Username or Password."
+			exit 3
+		fi
+
+#		if [ "$verbose" -eq 1 ] ; then
+#			echo Transmission Speeds\n downRate.value "$getdownrate"\n upRate.value "$getuprate"
+#		fi
+
+		#if getdownrate is greater then getdownwarn wehavewarn=+1 and 'echo warnoutput=getdownrate'
+		if [ $getdownrate -gt $getdownwarn ]; then
+			wehavewarn=1
+			if [ $getdownrate -gt $getdowncrit ]; then
+				wehavecrit=1
+				criticals="$criticals - Download"
+			else
+				warnings="$warnings - Download"
+			fi
+		fi
+		if [ $getuprate -gt $getupwarn ]; then
+			if [ $getuprate -gt $getupcrit ]; then
+				if [ "$wehavecrit" = 1 ]; then # Because the downrate is crit as well
+					warnings="$criticals and Upload"
+				else 
+					wehavecrit=1
+					criticals="$criticals - Upload"
+				fi
+			else
+				if [ "$wehavewarn" = 1 ]; then
+					warnings="$warnings and Upload"
+				else 
+					wehavewarn=1
+					warnings="$warnings - Upload"
+				fi
+			fi
+		fi
+		if [ "$wehavewarn" -eq 0 -a "$wehavecrit" -eq 0 ]; then
+			echo OK - Down=$getdownrate\KiB/s,Up=$getuprate\KiB/s
+			exit 0
+		fi
+		if [ "$wehavewarn" = 1 ]; then
+			if [ "$wehavecrit" = 1 ]; then
+				echo CRITICAL $criticals speeds : Down=$getdownrate\KiB/s,Up=$getuprate\KiB/s \| w=$getdownwarn,$getdowncrit c=$getupwarn,$getupcrit
+				exit 2 # Critical
+			else		
+				echo WARNING $warnings speeds : Down=$getdownrate\KiB/s,Up=$getuprate\KiB/s \| w=$getdownwarn,$getdowncrit c=$getupwarn,$getupcrit
+				exit 1 # Warning
+			fi
+		fi
+	

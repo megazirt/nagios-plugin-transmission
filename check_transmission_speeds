@@ -108,8 +108,8 @@ done
 		wehavewarn="0"
 		wehavecrit="0"
 #The proper checking starts	
-		getdownrate=`echo '{"method":"torrent-get","tag":1,"arguments":{"fields":["rateUpload","rateDownload"]}}' | transmission-remote "$hostname" -n "$user":"$pass" -l |grep Sum |awk '{print int($(NF))}'`
-		getuprate=`echo '{"method":"torrent-get","tag":1,"arguments":{"fields":["rateUpload","rateDownload"]}}' | transmission-remote "$hostname" -n "$user":"$pass" -l |grep Sum |awk '{print int($(NF-1))}'`
+		getdownrate=`echo '{"method":"torrent-get","tag":1,"arguments":{"fields":["rateUpload","rateDownload"]}}' | transmission-remote "$hostname" -n "$user":"$pass" -l |egrep '^Sum:' |awk '{print int($(NF))}'`
+		getuprate=`echo '{"method":"torrent-get","tag":1,"arguments":{"fields":["rateUpload","rateDownload"]}}' | transmission-remote "$hostname" -n "$user":"$pass" -l |egrep '^Sum:' |awk '{print int($(NF-1))}'`
 		if [ -z $getdownrate ]; then
 			echo "Incorrect Username or Password."
 			exit 3
